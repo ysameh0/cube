@@ -57,7 +57,7 @@ function factoryQueueDriver(cacheAndQueueDriver: CacheAndQueryDriverType, queueD
 }
 
 export class QueryQueue {
-  protected readonly concurrency: number;
+  public readonly concurrency: number;
 
   protected readonly continueWaitTimeout: number;
 
