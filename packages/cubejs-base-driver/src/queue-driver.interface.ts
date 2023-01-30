@@ -1,7 +1,14 @@
-export type QueryDef = unknown;
-export type QueryKey = (string | [string, any[]]) & {
+export type QueryDef = any;
+export type QueryKeyOptions = any;
+export type QueryKeyTuple = [
+  sql: string,
+  params: unknown[],
+  options?: QueryKeyOptions
+];
+export type QueryKey = (string | QueryKeyTuple) & {
   persistent?: true,
 };
+export type QueryMessageId = string;
 
 export type AddToQueueResponse = [added: number, _b: any, _c: any, queueSize: number, addedToQueueTime: number];
 export type QueryStageStateResponse = [active: string[], toProcess: string[]] | [active: string[], toProcess: string[], defs: Record<string, QueryDef>];
@@ -27,7 +34,7 @@ export interface QueueDriverOptions {
 }
 
 export interface QueueDriverConnectionInterface {
-  redisHash(queryKey: QueryKey): string;
+  redisHash(queryKey: QueryKey): QueryMessageId;
   getResultBlocking(queryKey: QueryKey): Promise<unknown>;
   getResult(queryKey: QueryKey): Promise<any>;
   addToQueue(keyScore: number, queryKey: QueryKey, orphanedTime: any, queryHandler: any, query: AddToQueueQuery, priority: number, options: AddToQueueOptions): Promise<AddToQueueResponse>;
@@ -45,10 +52,10 @@ export interface QueueDriverConnectionInterface {
   // Trying to acquire a lock for processing a queue item, this method can return null when
   // multiple nodes tries to process the same query
   retrieveForProcessing(queryKey: QueryKey, processingId: number | string): Promise<RetrieveForProcessingResponse>;
-  freeProcessingLock(queryKey: QueryKey, processingId: string | number, activated: unknown): Promise<void>;
+  freeProcessingLock(queryKey: QueryKey, processingId: string | number, activated: unknown): Promise<void | string>;
   optimisticQueryUpdate(queryKey: QueryKey, toUpdate, processingId): Promise<boolean>;
   cancelQuery(queryKey: QueryKey): Promise<QueryDef | null>;
-  getQueryAndRemove(queryKey: QueryKey): Promise<[QueryDef]>;
+  getQueryAndRemove(queryKey: QueryMessageId): Promise<[QueryDef]>;
   setResultAndRemoveQuery(queryKey: QueryKey, executionResult: any, processingId: any): Promise<unknown>;
   release(): void;
   //

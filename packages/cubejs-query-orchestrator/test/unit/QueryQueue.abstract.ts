@@ -1,16 +1,26 @@
 import { CubeStoreDriver } from '@cubejs-backend/cubestore-driver';
-import type { QueryKey } from '@cubejs-backend/base-driver';
+import type { QueryDef, QueryKey } from '@cubejs-backend/base-driver';
 import { pausePromise } from '@cubejs-backend/shared';
-import { QueryQueue } from '../../src';
+import { CacheAndQueryDriverType, QueryQueue } from '../../src';
 import { processUidRE } from '../../src/orchestrator/utils';
 
 export type QueryQueueTestOptions = {
-  cacheAndQueueDriver?: string,
+  cacheAndQueueDriver?: CacheAndQueryDriverType,
   redisPool?: any,
   cubeStoreDriverFactory?: () => Promise<CubeStoreDriver>,
   beforeAll?: () => Promise<void>,
   afterAll?: () => Promise<void>,
 };
+
+class OpenQueryQueue extends QueryQueue {
+  public async processQuery(queryKey: QueryKey) {
+    return super.processQuery(queryKey);
+  }
+
+  public async processCancel(query: QueryDef) {
+    return super.processCancel(query);
+  }
+}
 
 export const QueryQueueTest = (name: string, options: QueryQueueTestOptions = {}) => {
   describe(`QueryQueue${name}`, () => {
@@ -23,7 +33,7 @@ export const QueryQueueTest = (name: string, options: QueryQueueTestOptions = {}
     let processCancelPromises = [];
     let cancelledQuery;
 
-    const queue = new QueryQueue('test_query_queue', {
+    const queue = new OpenQueryQueue('test_query_queue', {
       queryHandlers: {
         foo: async (query) => `${query[0]} bar`,
         delay: async (query, setCancelHandler) => {
@@ -53,7 +63,7 @@ export const QueryQueueTest = (name: string, options: QueryQueueTestOptions = {}
       orphanedTimeout: 2,
       concurrency: 1,
       ...options,
-      logger,
+      logger: <any> logger,
     });
 
     async function awaitProcessing() {
@@ -94,8 +104,8 @@ export const QueryQueueTest = (name: string, options: QueryQueueTestOptions = {}
     }
 
     test('gutter', async () => {
-      const query = ['select * from'];
-      const result = await queue.executeInQueue('foo', query, query);
+      const query: QueryKey = ['select * from', []];
+      const result = await queue.executeInQueue('foo', query, {}, 10, {});
       expect(result).toBe('select * from bar');
     });
 
@@ -117,7 +127,7 @@ export const QueryQueueTest = (name: string, options: QueryQueueTestOptions = {}
     });
 
     test('timeout', async () => {
-      const query = ['select * from 2'];
+      const query: QueryKey = ['select * from 2', []];
       let errorString = '';
 
       for (let i = 0; i < 5; i++) {
@@ -194,7 +204,7 @@ export const QueryQueueTest = (name: string, options: QueryQueueTestOptions = {}
     });
 
     test('queue hash process persistent flag properly', () => {
-      const query = ['select * from table'];
+      const query: QueryKey = ['select * from table', []];
       const key1 = queue.redisHash(query);
       // @ts-ignore
       query.persistent = false;
@@ -233,7 +243,7 @@ export const QueryQueueTest = (name: string, options: QueryQueueTestOptions = {}
     });
 
     test('removed before reconciled', async () => {
-      const query = ['select * from'];
+      const query: QueryKey = ['select * from', []];
       const key = queue.redisHash(query);
       await queue.processQuery(key);
       const result = await queue.executeInQueue('foo', key, query);
@@ -242,8 +252,8 @@ export const QueryQueueTest = (name: string, options: QueryQueueTestOptions = {}
 
     const nonCubeStoreTest = options.cacheAndQueueDriver !== 'cubestore' ? test : xtest;
     nonCubeStoreTest('queue driver lock obtain race condition', async () => {
-      const redisClient: any = await queue.queueDriver.createConnection();
-      const redisClient2: any = await queue.queueDriver.createConnection();
+      const redisClient: any = await queue.getQueueDriver().createConnection();
+      const redisClient2: any = await queue.getQueueDriver().createConnection();
       const priority = 10;
       const time = new Date().getTime();
       const keyScore = time + (10000 - priority) * 1E14;
@@ -292,13 +302,13 @@ export const QueryQueueTest = (name: string, options: QueryQueueTestOptions = {}
       console.log(await redisClient.getQueryAndRemove('race'));
       console.log(await redisClient.getQueryAndRemove('race2'));
 
-      await queue.queueDriver.release(redisClient);
-      await queue.queueDriver.release(redisClient2);
+      await queue.getQueueDriver().release(redisClient);
+      await queue.getQueueDriver().release(redisClient2);
     });
 
     nonCubeStoreTest('activated but lock is not acquired', async () => {
-      const redisClient = await queue.queueDriver.createConnection();
-      const redisClient2 = await queue.queueDriver.createConnection();
+      const redisClient = await queue.getQueueDriver().createConnection();
+      const redisClient2 = await queue.getQueueDriver().createConnection();
       const priority = 10;
       const time = new Date().getTime();
       const keyScore = time + (10000 - priority) * 1E14;
@@ -336,8 +346,8 @@ export const QueryQueueTest = (name: string, options: QueryQueueTestOptions = {}
       console.log(await redisClient.getQueryAndRemove('activated1'));
       console.log(await redisClient.getQueryAndRemove('activated2'));
 
-      await queue.queueDriver.release(redisClient);
-      await queue.queueDriver.release(redisClient2);
+      await queue.getQueueDriver().release(redisClient);
+      await queue.getQueueDriver().release(redisClient2);
     });
   });
 };

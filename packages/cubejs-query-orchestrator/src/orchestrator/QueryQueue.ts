@@ -1,25 +1,47 @@
 import R from 'ramda';
 import { getEnv, getProcessUid } from '@cubejs-backend/shared';
-import { QueueDriverInterface } from '@cubejs-backend/base-driver';
-import { CubeStoreQueueDriver } from '@cubejs-backend/cubestore-driver';
+import { QueryDef, QueryKey, QueueDriverInterface, QueueDriverOptions } from '@cubejs-backend/base-driver';
+import { CubeStoreDriver, CubeStoreQueueDriver } from '@cubejs-backend/cubestore-driver';
 
 import { TimeoutError } from './TimeoutError';
 import { ContinueWaitError } from './ContinueWaitError';
 import { RedisQueueDriver } from './RedisQueueDriver';
 import { LocalQueueDriver } from './LocalQueueDriver';
 import { QueryStream } from './QueryStream';
+import { CacheAndQueryDriverType } from './QueryOrchestrator';
+import { RedisPool } from './RedisPool';
 
-/**
- * @param cacheAndQueueDriver
- * @param queueDriverOptions
- * @returns {QueueDriverInterface}
- */
-function factoryQueueDriver(cacheAndQueueDriver, queueDriverOptions) {
-  switch (cacheAndQueueDriver || 'memory') {
+export type SendProcessMessageFn = (queryKey: QueryKey) => Promise<void> | void;
+export type SendCancelMessageFn = (query: QueryDef) => Promise<void> | void;
+
+export interface QueryQueueOptions {
+  queryHandlers: any,
+  cancelHandlers: any,
+  cacheAndQueueDriver?: CacheAndQueryDriverType,
+  redisPool?: RedisPool,
+  cubeStoreDriverFactory?: () => Promise<CubeStoreDriver>
+  concurrency?: number,
+  continueWaitTimeout?: number,
+  executionTimeout?: number,
+  orphanedTimeout?: number,
+  heartBeatInterval?: number,
+  sendProcessMessageFn?: SendProcessMessageFn,
+  sendCancelMessageFn?: SendCancelMessageFn,
+  getQueueEventsBus?: any,
+  logger?: any,
+  skipQueue?: boolean,
+}
+
+interface FactoryQueueDriverOptions extends QueueDriverOptions {
+  cubeStoreDriverFactory?: () => Promise<CubeStoreDriver>
+}
+
+function factoryQueueDriver(cacheAndQueueDriver: CacheAndQueryDriverType, queueDriverOptions: FactoryQueueDriverOptions): QueueDriverInterface {
+  switch (cacheAndQueueDriver) {
     case 'redis':
-      return new RedisQueueDriver(queueDriverOptions);
+      return <any> new RedisQueueDriver(queueDriverOptions);
     case 'memory':
-      return new LocalQueueDriver(queueDriverOptions);
+      return <any> new LocalQueueDriver(queueDriverOptions);
     case 'cubestore':
       if (!queueDriverOptions.cubeStoreDriverFactory) {
         throw new Error('cubeStoreDriverFactory is a required option for Cube Store queue driver');
@@ -35,75 +57,55 @@ function factoryQueueDriver(cacheAndQueueDriver, queueDriverOptions) {
 }
 
 export class QueryQueue {
+  protected readonly concurrency: number;
+
+  protected readonly continueWaitTimeout: number;
+
+  protected readonly executionTimeout: number;
+
+  protected readonly orphanedTimeout: number;
+
+  protected readonly heartBeatInterval: number;
+
+  protected readonly sendProcessMessageFn: SendProcessMessageFn;
+
+  protected readonly sendCancelMessageFn: SendCancelMessageFn;
+
+  protected readonly queryHandlers: any;
+
+  protected readonly cancelHandlers: any;
+
+  protected readonly logger: any;
+
+  protected readonly queueDriver: QueueDriverInterface;
+
+  protected readonly skipQueue: boolean;
+
   /**
-   * Class constructor.
-   *
-   * @param {*} redisQueuePrefix
-   * @param {*} options
+   * Persistent queries streams maps.
    */
-  constructor(redisQueuePrefix, options) {
-    /**
-     * @type {string}
-     */
-    this.redisQueuePrefix = redisQueuePrefix;
+  protected readonly streams: { queued: Map<string, any>, processing: Map<string, any> } = {
+    queued: new Map(),
+    processing: new Map(),
+  };
 
-    /**
-     * @type {number}
-     */
+  protected reconcilePromise: Promise<any>;
+
+  private reconcileAgain: boolean;
+
+  public constructor(
+    protected readonly redisQueuePrefix: string,
+    options: QueryQueueOptions
+  ) {
     this.concurrency = options.concurrency || 2;
-
-    /**
-     * @protected
-     * @type {number}
-     */
     this.continueWaitTimeout = options.continueWaitTimeout || 5;
-
-    /**
-     * @protected
-     * @type {number}
-     */
     this.executionTimeout = options.executionTimeout || getEnv('dbQueryTimeout');
-
-    /**
-     * @protected
-     * @type {number}
-     */
     this.orphanedTimeout = options.orphanedTimeout || 120;
-
-    /**
-     * @protected
-     * @type {number}
-     */
     this.heartBeatInterval = options.heartBeatInterval || 30;
-
-    /**
-     * @protected
-     * @type {function(string): Promise<void>}
-     */
     this.sendProcessMessageFn = options.sendProcessMessageFn || ((queryKey) => { this.processQuery(queryKey); });
-
-    /**
-     * @protected
-     * @type {function(*): Promise<void>}
-     */
     this.sendCancelMessageFn = options.sendCancelMessageFn || ((query) => { this.processCancel(query); });
-
-    /**
-     * @protected
-     * @type {*}
-     */
     this.queryHandlers = options.queryHandlers;
-
-    /**
-     * @protected
-     * @type {*}
-     */
     this.cancelHandlers = options.cancelHandlers;
-
-    /**
-     * @protected
-     * @type {function(string, *): void}
-     */
     this.logger = options.logger || ((message, event) => console.log(`${message} ${JSON.stringify(event)}`));
 
     const queueDriverOptions = {
@@ -117,31 +119,18 @@ export class QueryQueue {
       getQueueEventsBus: options.getQueueEventsBus
     };
 
-    /**
-     * @type {QueueDriverInterface}
-     */
-    this.queueDriver = factoryQueueDriver(options.cacheAndQueueDriver, queueDriverOptions);
-    /**
-     * @protected
-     * @type {boolean}
-     */
+    this.queueDriver = factoryQueueDriver(options.cacheAndQueueDriver || 'memory', queueDriverOptions);
     this.skipQueue = options.skipQueue;
+  }
 
-    /**
-     * Persistent queries streams maps.
-     */
-    this.streams = {
-      queued: new Map(),
-      processing: new Map(),
-    };
+  public getQueueDriver(): QueueDriverInterface {
+    return this.queueDriver;
   }
 
   /**
    * Returns stream object which will be used to pipe data from data source.
-   *
-   * @param {*} queryKeyHash
    */
-  getQueryStream(queryKeyHash) {
+  public getQueryStream(queryKeyHash: string) {
     if (!this.streams.queued.has(queryKeyHash)) {
       throw new Error(`Unable to find stream for persisted query with id: ${queryKeyHash}`);
     }
@@ -149,11 +138,7 @@ export class QueryQueue {
     return this.streams.queued.get(queryKeyHash);
   }
 
-  /**
-   * @param {*} queryKey
-   * @param {{ [alias: string]: string }} aliasNameToMember
-   */
-  setQueryStream(queryKey, aliasNameToMember) {
+  public setQueryStream(queryKey: QueryKey, aliasNameToMember: any) {
     const key = this.redisHash(queryKey);
     const stream = new QueryStream({
       key,
@@ -169,21 +154,14 @@ export class QueryQueue {
    * Depends on the `queryHandler` value either runs `executeQueryInQueue`
    * or `executeStreamInQueue` method.
    *
-   * @param {string} queryHandler For the regular query is eq to 'query'.
-   * @param {*} queryKey
-   * @param {*} query
-   * @param {number=} priority
-   * @param {*=} options
-   * @returns {*}
-   *
    * @throw {ContinueWaitError}
    */
-  async executeInQueue(
-    queryHandler,
-    queryKey,
-    query,
-    priority,
-    options,
+  public async executeInQueue(
+    queryHandler: string,
+    queryKey: QueryKey,
+    query: any,
+    priority: number = 0,
+    options: any = {},
   ) {
     switch (queryHandler) {
       case 'stream':
@@ -223,7 +201,7 @@ export class QueryQueue {
    * @param {*=} options
    * @returns {Promise<void>}
    */
-  async executeStreamInQueue(
+  protected async executeStreamInQueue(
     queryHandler,
     queryKey,
     query,
@@ -284,7 +262,7 @@ export class QueryQueue {
    *
    * @throw {ContinueWaitError}
    */
-  async executeQueryInQueue(
+  protected async executeQueryInQueue(
     queryHandler,
     queryKey,
     query,
@@ -398,12 +376,9 @@ export class QueryQueue {
   /**
    * Parse query result.
    *
-   * @param {*} result
-   * @returns {*}
-   *
    * @throw {Error}
    */
-  parseResult(result) {
+  protected parseResult(result) {
     if (!result) {
       return;
     }
@@ -419,10 +394,8 @@ export class QueryQueue {
    * Run query queue reconciliation flow by calling internal `reconcileQueueImpl`
    * method. Returns promise which will be resolved with the reconciliation
    * result.
-   *
-   * @returns {Promise}
    */
-  async reconcileQueue() {
+  public async reconcileQueue() {
     if (!this.reconcilePromise) {
       this.reconcileAgain = false;
       this.reconcilePromise = this.reconcileQueueImpl()
@@ -447,7 +420,7 @@ export class QueryQueue {
     return this.reconcilePromise;
   }
 
-  async shutdown() {
+  public async shutdown() {
     if (this.reconcilePromise) {
       await this.reconcilePromise;
     }
@@ -459,7 +432,7 @@ export class QueryQueue {
    *
    * @returns {Promise<Object>}
    */
-  async getQueries() {
+  public async getQueries() {
     const queueConnection = await this.queueDriver.createConnection();
     try {
       const [stalledQueries, orphanedQueries, activeQueries, toProcessQueries] = await Promise.all([
@@ -509,7 +482,7 @@ export class QueryQueue {
    * @param {*} queryKey
    * @returns {void}
    */
-  async cancelQuery(queryKey) {
+  public async cancelQuery(queryKey) {
     const queueConnection = await this.queueDriver.createConnection();
     try {
       const query = await queueConnection.cancelQuery(queryKey);
@@ -541,7 +514,7 @@ export class QueryQueue {
    * @private
    * @returns {Promise<void>}
    */
-  async reconcileQueueImpl() {
+  protected async reconcileQueueImpl() {
     const queueConnection = await this.queueDriver.createConnection();
     try {
       const toCancel = await queueConnection.getQueriesToCancel();
@@ -564,9 +537,12 @@ export class QueryQueue {
 
       const [active, toProcess] = await queueConnection.getActiveAndToProcess();
 
+      // @ts-ignore
       await Promise.all(
+        // @ts-ignore
         R.pipe(
-          R.filter(p => {
+          // @ts-ignore
+          R.filter((p: string) => {
             if (active.indexOf(p) === -1) {
               const subKeys = p.split('@');
               if (subKeys.length === 1) {
@@ -585,6 +561,7 @@ export class QueryQueue {
           }),
           R.take(this.concurrency),
           R.map(this.sendProcessMessageFn)
+          // @ts-ignore
         )(toProcess)
       );
     } finally {
@@ -601,7 +578,7 @@ export class QueryQueue {
    *
    * @throw
    */
-  queryTimeout(promise) {
+  protected queryTimeout(promise) {
     let timeout;
     const { executionTimeout } = this;
 
@@ -624,10 +601,8 @@ export class QueryQueue {
   /**
    * Returns the list of queries planned to be processed and the list of active
    * queries.
-   *
-   * @returns {Array}
    */
-  async fetchQueryStageState() {
+  public async fetchQueryStageState() {
     const queueConnection = await this.queueDriver.createConnection();
     try {
       return queueConnection.getQueryStageState(false);
@@ -640,12 +615,9 @@ export class QueryQueue {
    * Returns current state of the specified by the `stageQueryKey` query if it
    * exists.
    *
-   * @param {*} stageQueryKey
-   * @param {number=} priorityFilter
-   * @param {Array=} queryStageState
    * @returns {Promise<undefined> | Promise<{ stage: string, timeElapsed: number }>}
    */
-  async getQueryStage(stageQueryKey, priorityFilter, queryStageState) {
+  public async getQueryStage(stageQueryKey: any, priorityFilter?: number, queryStageState?: any) {
     const [active, toProcess, allQueryDefs] = queryStageState || await this.fetchQueryStageState();
 
     const queryDefs = toProcess.map(k => allQueryDefs[k]).filter(q => !!q);
@@ -676,7 +648,7 @@ export class QueryQueue {
    * @param {*} query
    * @returns {Promise<{ result: undefined | Object, error: string | undefined }>}
    */
-  async processQuerySkipQueue(query) {
+  protected async processQuerySkipQueue(query) {
     const startQueryTime = (new Date()).getTime();
     this.logger('Performing query', {
       queueSize: 0,
@@ -741,7 +713,7 @@ export class QueryQueue {
    * @param {string} queryKeyHashed
    * @return {Promise<{ result: undefined | Object, error: string | undefined }>}
    */
-  async processQuery(queryKeyHashed) {
+  protected async processQuery(queryKeyHashed) {
     const queueConnection = await this.queueDriver.createConnection();
 
     let insertedCount;
@@ -948,7 +920,7 @@ export class QueryQueue {
    *
    * @param {*} query
    */
-  async processCancel(query) {
+  protected async processCancel(query) {
     const { queryHandler } = query;
     try {
       if (!this.cancelHandlers[queryHandler]) {
@@ -967,11 +939,8 @@ export class QueryQueue {
 
   /**
    * Returns hash sum of the specified `queryKey`.
-   *
-   * @param {*} queryKey
-   * @returns {string}
    */
-  redisHash(queryKey) {
+  public redisHash(queryKey: QueryKey): string {
     return this.queueDriver.redisHash(queryKey);
   }
 }
