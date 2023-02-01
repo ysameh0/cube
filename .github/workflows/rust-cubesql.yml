@@ -197,7 +197,7 @@ jobs:
           CUBEJS_NATIVE_INTERNAL_DEBUG: true
         run: cd packages/cubejs-testing && yarn smoke:cubesql
 
-  native:
+  native_windows:
     needs: [lint,unit,unit_legacy]
     runs-on: ${{ matrix.os-version }}
     timeout-minutes: 60
@@ -207,7 +207,7 @@ jobs:
       matrix:
         # We dont need to test under all versions, we do it under linux
         node-version: [16.x]
-        os-version: [windows-2019, macos-11]
+        os-version: [windows-2019]
       fail-fast: false
 
     steps:
@@ -234,18 +234,6 @@ jobs:
       - name: Get yarn cache directory path
         id: yarn-cache-dir-path
         run: echo "::set-output name=dir::$(yarn cache dir)"
-      - name: Restore lerna (excluding Windows)
-        uses: actions/cache@v3
-        if: ${{ !startsWith(matrix.os-version, 'windows') }}
-        with:
-          path: |
-            ${{ steps.yarn-cache-dir-path.outputs.dir }}
-            node_modules
-            rust/cubesql/node_modules
-            packages/*/node_modules
-          key: ${{ runner.os }}-workspace-main-${{ matrix.node-version }}-${{ hashFiles('**/yarn.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-workspace-main-${{ matrix.node-version }}-
       # Windows doesn't support links + cache action doesn't support exclude
       # cache will include rust cache for native, which causes 3GB archive
       # Right now, GH provides 10 gb for each repository with automatic retention.
@@ -275,3 +263,64 @@ jobs:
           CUBESQL_STREAM_MODE: true
           CUBEJS_NATIVE_INTERNAL_DEBUG: true
         run: cd packages/cubejs-backend-native && yarn run native:build && yarn run test:unit
+
+  native_darwin:
+    needs: [lint,unit,unit_legacy]
+    runs-on: ${{ matrix.os-version }}
+    timeout-minutes: 60
+    name: Build ${{ matrix.os-version }} ${{ matrix.node-version }} ${{ matrix.target }}
+
+    strategy:
+      matrix:
+        # We don't need to test under all versions, we do it under linux
+        node-version: [16.x]
+        target: ["x86_64-apple-darwin", "aarch64-apple-darwin"]
+        os-version: [macos-11]
+      fail-fast: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly-2022-03-08
+          override: true
+          components: rustfmt
+          target: ${{ matrix.target }}
+      - name: Install Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Install Yarn
+        run: npm install -g yarn
+      - name: Set Yarn version
+        run: yarn policies set-version v1.22.5
+      - name: Get yarn cache directory path
+        id: yarn-cache-dir-path
+        run: echo "::set-output name=dir::$(yarn cache dir)"
+      - name: Restore lerna (excluding Windows)
+        uses: actions/cache@v3
+        with:
+          path: |
+            ${{ steps.yarn-cache-dir-path.outputs.dir }}
+            node_modules
+            rust/cubesql/node_modules
+            packages/*/node_modules
+          key: ${{ runner.os }}-workspace-main-${{ matrix.node-version }}-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-workspace-main-${{ matrix.node-version }}-
+      - name: Yarn install
+        uses: nick-invision/retry@v2
+        env:
+          CUBESTORE_SKIP_POST_INSTALL: true
+        with:
+          max_attempts: 3
+          retry_on: error
+          retry_wait_seconds: 15
+          timeout_minutes: 20
+          command: yarn install --frozen-lockfile
+      - name: Build native
+        env:
+          CUBEJS_NATIVE_INTERNAL_DEBUG: true
+        run: cd packages/cubejs-backend-native && yarn run native:build --target ${{ matrix.target }} && yarn run test:unit
