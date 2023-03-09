@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -21,6 +22,11 @@ export default defineConfig(({ mode }) => ({
         additionalData: '@root-entry-name: default;',
       },
     },
+  },
+
+  test: {
+    globals: true,
+    environment: 'happy-dom',
   },
 
   define:
