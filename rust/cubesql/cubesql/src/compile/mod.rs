@@ -64,7 +64,7 @@ use self::{
             create_regexp_substr_udf, create_second_udf, create_session_user_udf, create_sha1_udf,
             create_str_to_date_udf, create_time_format_udf, create_timediff_udf,
             create_to_char_udf, create_to_date_udf, create_ucase_udf, create_unnest_udtf,
-            create_user_udf, create_version_udf, create_year_udf,
+            create_user_udf, create_version_udf, create_year_udf, register_fun_stubs,
         },
     },
     parser::parse_sql_to_statement,
@@ -1191,6 +1191,9 @@ WHERE `TABLE_SCHEMA` = '{}'",
         // redshift
         ctx.register_udf(create_datediff_udf());
         ctx.register_udf(create_dateadd_udf());
+
+        // fn stubs
+        ctx = register_fun_stubs(ctx);
 
         ctx
     }
