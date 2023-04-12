@@ -1,8 +1,8 @@
 pub mod status;
 
-use std::sync::Arc;
 #[cfg(feature = "ws-close-reason")]
 use std::error::Error;
+use std::sync::Arc;
 
 use warp::{Filter, Rejection, Reply};
 
