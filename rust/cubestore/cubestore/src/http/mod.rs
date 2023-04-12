@@ -160,7 +160,7 @@ impl HttpServer {
                                                 if let Some(err) = source.downcast_ref::<tokio_tungstenite::tungstenite::Error>() {
                                                     match err {
                                                         tokio_tungstenite::tungstenite::Error::Capacity(err) => {
-                                                            warp::ws::Message::close_with(1011_u16, format!("{}", err))
+                                                            warp::ws::Message::close_with(1009_u16, format!("{}", err))
                                                         },
                                                         _ => {
                                                             break;
