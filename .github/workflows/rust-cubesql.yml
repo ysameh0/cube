@@ -323,6 +323,10 @@ jobs:
       - name: Lerna tsc
         run: yarn tsc
       - name: Build native
+        run: cd packages/cubejs-backend-native && yarn run native:build --target ${{ matrix.target }}
+      - name: Unit
+        # It's not possible to test aarch64 on x86
+        if: (matrix.target != 'aarch64-apple-darwin')
         env:
           CUBEJS_NATIVE_INTERNAL_DEBUG: true
-        run: cd packages/cubejs-backend-native && yarn run native:build --target ${{ matrix.target }} && yarn run test:unit
+        run: cd packages/cubejs-backend-native && cd yarn run test:unit
