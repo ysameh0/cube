@@ -202,7 +202,6 @@ jobs:
     runs-on: ${{ matrix.os-version }}
     timeout-minutes: 60
     name: Build ${{ matrix.os-version }} ${{ matrix.node-version }}
-
     strategy:
       matrix:
         # We dont need to test under all versions, we do it under linux
@@ -269,7 +268,6 @@ jobs:
     runs-on: ${{ matrix.os-version }}
     timeout-minutes: 60
     name: Build ${{ matrix.os-version }} ${{ matrix.node-version }} ${{ matrix.target }}
-
     strategy:
       matrix:
         # We don't need to test under all versions, we do it under linux
@@ -323,7 +321,9 @@ jobs:
       - name: Lerna tsc
         run: yarn tsc
       - name: Build native
-        run: cd packages/cubejs-backend-native && yarn run native:build --target ${{ matrix.target }}
+        env:
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
+        run: cd packages/cubejs-backend-native && yarn run native:build
       - name: Unit
         # It's not possible to test aarch64 on x86
         if: (matrix.target != 'aarch64-apple-darwin')
