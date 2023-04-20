@@ -1,4 +1,8 @@
+use convert_case::{Case, Casing};
 use neon::prelude::*;
+use pyo3::exceptions::PyTypeError;
+use pyo3::types::{PyBool, PyFloat, PyInt, PyString};
+use pyo3::{PyAny, PyErr, PyResult};
 use std::collections::HashMap;
 
 pub enum CubeConfigPyVariableValue {
@@ -12,8 +16,38 @@ pub struct CubeConfigPy {
 }
 
 impl CubeConfigPy {
-    pub fn new(dynamic_properties: HashMap<String, CubeConfigPyVariableValue>) -> Self {
-        Self { dynamic_properties }
+    pub fn new() -> Self {
+        Self {
+            dynamic_properties: HashMap::new(),
+        }
+    }
+
+    pub fn dynamic_from_attr(&mut self, config_module: &PyAny, key: &str) -> PyResult<()> {
+        let v = config_module.getattr(&*key)?;
+        if !v.is_none() {
+            let value = if v.get_type().is_subclass_of::<PyString>()? {
+                CubeConfigPyVariableValue::String(v.to_string())
+            } else if v.get_type().is_subclass_of::<PyBool>()? {
+                CubeConfigPyVariableValue::Bool(v.downcast::<PyBool>()?.is_true())
+            } else if v.get_type().is_subclass_of::<PyFloat>()? {
+                let f = v.downcast::<PyFloat>()?;
+                CubeConfigPyVariableValue::Number(f.value())
+            } else if v.get_type().is_subclass_of::<PyInt>()? {
+                let i: i64 = v.downcast::<PyInt>()?.extract()?;
+                CubeConfigPyVariableValue::Number(i as f64)
+            } else {
+                return Err(PyErr::new::<PyTypeError, _>(format!(
+                    "Unsupported configuration type: {} for key: {}",
+                    v.get_type(),
+                    key
+                )));
+            };
+
+            self.dynamic_properties
+                .insert(key.to_case(Case::Camel), value);
+        };
+
+        Ok(())
     }
 }
 
