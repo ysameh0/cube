@@ -13,6 +13,7 @@ import {
   resolveBuiltInPackageVersion,
 } from '@cubejs-backend/shared';
 import { SystemOptions } from '@cubejs-backend/server-core';
+import { pythonLoadConfig } from '@cubejs-backend/native';
 
 import {
   getMajorityVersion,
@@ -265,6 +266,10 @@ export class ServerContainer {
       process.env.NODE_ENV = 'development';
     }
 
+    if (fs.existsSync(path.join(process.cwd(), 'cube.py'))) {
+      return this.loadPythonConfiguration();
+    }
+
     if (fs.existsSync(path.join(process.cwd(), 'cube.ts'))) {
       return this.loadConfigurationFromMemory(
         this.getTypeScriptCompiler().compileConfiguration()
@@ -311,6 +316,19 @@ export class ServerContainer {
     throw new Error(
       'Configure file must export configuration as default.'
     );
+  }
+
+  protected async loadPythonConfiguration(): Promise<CreateOptions> {
+    const file = await import(
+      path.join(process.cwd(), 'cube.py')
+    );
+    //
+    // const config = await pythonLoadConfig(file, {
+    //   file: 'cube.py',
+    // });
+    // console.log(config);
+
+    return {};
   }
 
   protected async loadConfigurationFromFile(): Promise<CreateOptions> {

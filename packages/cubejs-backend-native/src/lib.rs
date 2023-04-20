@@ -7,6 +7,7 @@ mod logger;
 mod stream;
 mod transport;
 mod utils;
+mod python;
 
 use once_cell::sync::OnceCell;
 
@@ -21,6 +22,8 @@ use neon::prelude::*;
 use simple_logger::SimpleLogger;
 use tokio::runtime::{Builder, Runtime};
 use transport::NodeBridgeTransport;
+use pyo3::prelude::*;
+use crate::python::CubeConfigPy;
 
 struct SQLInterface {
     services: Arc<CubeServices>,
@@ -186,11 +189,37 @@ fn shutdown_interface(mut cx: FunctionContext) -> JsResult<JsPromise> {
     Ok(promise)
 }
 
+fn python_load_config(mut cx: FunctionContext) -> JsResult<JsPromise> {
+    let config_file_content = cx.argument::<JsString>(0)?.value(&mut cx);
+
+    let (deferred, promise) = cx.promise();
+    let channel = cx.channel();
+
+    let conf = Python::with_gil(|py| -> PyResult<CubeConfigPy> {
+        let cube_conf_code = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/python/cube/src/conf/__init__.py"));
+        PyModule::from_code(py, cube_conf_code, "__init__.py", "cube.conf")?;
+
+        let config_module = PyModule::from_code(py, &config_file_content, "config.py", "")?.getattr("settings")?;
+        // println!("{:?}", config_module.getattr("schema_path")?);
+
+        Ok(CubeConfigPy {
+            schema_path: config_module.getattr("schema_path")?.to_string(),
+            pg_sql_port: config_module.getattr("pg_sql_port")?.to_string(),
+        })
+    }).unwrap();
+
+    deferred.settle_with(&channel, move |mut cx| conf.to_object(&mut cx));
+
+    Ok(promise)
+}
+
 #[neon::main]
 fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("setupLogger", setup_logger)?;
     cx.export_function("registerInterface", register_interface)?;
     cx.export_function("shutdownInterface", shutdown_interface)?;
+
+    cx.export_function("pythonLoadConfig", python_load_config)?;
 
     Ok(())
 }
