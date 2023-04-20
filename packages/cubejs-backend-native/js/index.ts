@@ -236,7 +236,7 @@ export const shutdownInterface = async (instance: SqlInterfaceInstance): Promise
     await new Promise((resolve) => setTimeout(resolve, 2000));
 }
 
-export const pythonLoadConfig = async (context: string, options: { file: string }): Promise<void> => {
+export const pythonLoadConfig = async (context: string, options: { file: string }): Promise<unknown> => {
     const native = loadNative();
 
     return native.pythonLoadConfig(context, options);

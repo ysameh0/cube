@@ -1,8 +1,20 @@
 use neon::prelude::*;
+use std::collections::HashMap;
+
+pub enum CubeConfigPyVariableValue {
+    String(String),
+    Number(f64),
+    Bool(bool),
+}
 
 pub struct CubeConfigPy {
-    pub(crate) schema_path: String,
-    pub(crate) pg_sql_port: String,
+    dynamic_properties: HashMap<String, CubeConfigPyVariableValue>,
+}
+
+impl CubeConfigPy {
+    pub fn new(dynamic_properties: HashMap<String, CubeConfigPyVariableValue>) -> Self {
+        Self { dynamic_properties }
+    }
 }
 
 impl Finalize for CubeConfigPy {}
@@ -12,11 +24,22 @@ impl CubeConfigPy {
     pub fn to_object<'a, C: Context<'a>>(self, cx: &mut C) -> JsResult<'a, JsObject> {
         let obj = cx.empty_object();
 
-        let schema_path = JsString::new(cx, self.schema_path);
-        obj.set(cx, "schema_path", schema_path)?;
-
-        let pg_sql_port = JsString::new(cx, self.pg_sql_port);
-        obj.set(cx, "pgSqlPort", pg_sql_port)?;
+        for (k, v) in self.dynamic_properties.into_iter() {
+            match v {
+                CubeConfigPyVariableValue::String(v) => {
+                    let js_val = JsString::new(cx, v);
+                    obj.set(cx, &*k, js_val)?;
+                }
+                CubeConfigPyVariableValue::Number(v) => {
+                    let js_val = JsNumber::new(cx, v);
+                    obj.set(cx, &*k, js_val)?;
+                }
+                CubeConfigPyVariableValue::Bool(v) => {
+                    let js_val = JsBoolean::new(cx, v);
+                    obj.set(cx, &*k, js_val)?;
+                }
+            }
+        }
 
         Ok(obj)
     }

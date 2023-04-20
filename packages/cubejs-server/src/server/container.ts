@@ -1,5 +1,6 @@
 import path from 'path';
 import fs from 'fs';
+import fsAsync from 'fs/promises';
 import vm from 'vm';
 import color from '@oclif/color';
 import dotenv from '@cubejs-backend/dotenv';
@@ -267,6 +268,10 @@ export class ServerContainer {
     }
 
     if (fs.existsSync(path.join(process.cwd(), 'cube.py'))) {
+      console.log(
+        `${color.yellow('warning')} You are using Python configuration 🐍, which is an experimental feature and may not support all features`
+      );
+
       return this.loadPythonConfiguration();
     }
 
@@ -319,16 +324,16 @@ export class ServerContainer {
   }
 
   protected async loadPythonConfiguration(): Promise<CreateOptions> {
-    const file = await import(
-      path.join(process.cwd(), 'cube.py')
+    const file = await fsAsync.readFile(
+      path.join(process.cwd(), 'cube.py'),
+      'utf-8'
     );
-    //
-    // const config = await pythonLoadConfig(file, {
-    //   file: 'cube.py',
-    // });
-    // console.log(config);
 
-    return {};
+    const config = await pythonLoadConfig(file, {
+      file: 'cube.py',
+    });
+
+    return config as any;
   }
 
   protected async loadConfigurationFromFile(): Promise<CreateOptions> {

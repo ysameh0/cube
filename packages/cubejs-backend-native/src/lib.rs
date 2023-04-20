@@ -4,26 +4,29 @@ mod auth;
 mod channel;
 mod config;
 mod logger;
+mod python;
 mod stream;
 mod transport;
 mod utils;
-mod python;
 
 use once_cell::sync::OnceCell;
+use std::collections::HashMap;
 
 use std::sync::Arc;
 
+use crate::python::{CubeConfigPy, CubeConfigPyVariableValue};
 use auth::NodeBridgeAuthService;
 use config::NodeConfig;
+use convert_case::{Case, Casing};
 use cubesql::{config::CubeServices, telemetry::ReportingLogger};
 use log::Level;
 use logger::NodeBridgeLogger;
 use neon::prelude::*;
+use pyo3::prelude::*;
+use pyo3::types::{PyBool, PyFloat, PyInt, PyString};
 use simple_logger::SimpleLogger;
 use tokio::runtime::{Builder, Runtime};
 use transport::NodeBridgeTransport;
-use pyo3::prelude::*;
-use crate::python::CubeConfigPy;
 
 struct SQLInterface {
     services: Arc<CubeServices>,
@@ -196,17 +199,55 @@ fn python_load_config(mut cx: FunctionContext) -> JsResult<JsPromise> {
     let channel = cx.channel();
 
     let conf = Python::with_gil(|py| -> PyResult<CubeConfigPy> {
-        let cube_conf_code = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/python/cube/src/conf/__init__.py"));
+        let cube_conf_code = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/python/cube/src/conf/__init__.py"
+        ));
         PyModule::from_code(py, cube_conf_code, "__init__.py", "cube.conf")?;
 
-        let config_module = PyModule::from_code(py, &config_file_content, "config.py", "")?.getattr("settings")?;
-        // println!("{:?}", config_module.getattr("schema_path")?);
+        let config_module =
+            PyModule::from_code(py, &config_file_content, "config.py", "")?.getattr("settings")?;
 
-        Ok(CubeConfigPy {
-            schema_path: config_module.getattr("schema_path")?.to_string(),
-            pg_sql_port: config_module.getattr("pg_sql_port")?.to_string(),
-        })
-    }).unwrap();
+        let mut dynamic_properties = HashMap::new();
+
+        let mut populate_dynamic_property = |key: &str| -> PyResult<()> {
+            let v = config_module.getattr(&*key)?;
+            if !v.is_none() {
+                let value = if v.get_type().is_subclass_of::<PyString>()? {
+                    CubeConfigPyVariableValue::String(v.to_string())
+                } else if v.get_type().is_subclass_of::<PyBool>()? {
+                    CubeConfigPyVariableValue::Bool(v.downcast::<PyBool>()?.is_true())
+                } else if v.get_type().is_subclass_of::<PyFloat>()? {
+                    let f = v.downcast::<PyFloat>()?;
+                    CubeConfigPyVariableValue::Number(f.value())
+                } else if v.get_type().is_subclass_of::<PyInt>()? {
+                    let i: i64 = v.downcast::<PyInt>()?.extract()?;
+                    CubeConfigPyVariableValue::Number(i as f64)
+                } else {
+                    // TODO:
+                    panic!(
+                        "Unsupported configuration type: {} for key: {}",
+                        v.get_type(),
+                        key
+                    )
+                };
+
+                dynamic_properties.insert(key.to_case(Case::Camel), value);
+            }
+
+            Ok(())
+        };
+
+        // TODO: Dynamic iter
+        populate_dynamic_property("schema_path")?;
+        populate_dynamic_property("base_path")?;
+        populate_dynamic_property("compiler_cache_size")?;
+        populate_dynamic_property("telemetry")?;
+        populate_dynamic_property("pg_sql_port")?;
+
+        Ok(CubeConfigPy::new(dynamic_properties))
+    })
+    .unwrap();
 
     deferred.settle_with(&channel, move |mut cx| conf.to_object(&mut cx));
 
