@@ -243,6 +243,22 @@ interface PyConfiguration {
 
 export const pythonLoadConfig = async (context: string, options: { file: string }): Promise<PyConfiguration> => {
     const native = loadNative();
+    const config = await native.pythonLoadConfig(context, options);
 
-    return native.pythonLoadConfig(context, options);
+    if (config.checkAuth) {
+        const nativeCheckAuth = config.checkAuth;
+        config.checkAuth = async (req: any, authorization: string) => {
+            return nativeCheckAuth(
+              // Req is a large object, let's simplify it
+              {
+                  url: req.url,
+                  method: req.method,
+                  headers: req.headers,
+              },
+              authorization
+            );
+        };
+    }
+
+    return config;
 }
