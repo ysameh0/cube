@@ -1,6 +1,7 @@
-const path = require('path');
-const fs = require('fs/promises');
-const native = require('../dist/js/index');
+import fs from 'fs/promises';
+import path from 'path';
+
+import * as native from '../js';
 
 (async () => {
     native.setupLogger(
