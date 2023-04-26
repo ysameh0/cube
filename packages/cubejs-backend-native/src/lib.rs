@@ -214,6 +214,8 @@ fn python_load_config(mut cx: FunctionContext) -> JsResult<JsPromise> {
         cube_conf.dynamic_from_attr(config_module, "telemetry")?;
         cube_conf.dynamic_from_attr(config_module, "pg_sql_port")?;
 
+        cube_conf.apply_dynamic_functions(config_module)?;
+
         Ok(cube_conf)
     });
 

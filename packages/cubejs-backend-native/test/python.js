@@ -21,4 +21,32 @@ const native = require('../dist/js/index');
     );
 
     console.log(config);
+
+    if (config.queryRewrite) {
+        console.log('->queryRewrite');
+
+        const result = config.queryRewrite(
+            {
+                measures: ['Orders.count']
+            },
+            {
+                securityContext: {
+                    tenantId: 1
+                }
+            }
+        );
+
+        console.log('<-', result);
+    }
+
+
+    if (config.checkAuth) {
+        console.log('->checkAuth');
+
+        const result = config.checkAuth({
+            requestId: 'kek'
+        }, 'MY_LONG_TOKEN');
+
+        console.log('<-', result);
+    }
 })();
