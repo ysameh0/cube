@@ -20,7 +20,7 @@
     "upload-binary": "mkdir -p native && cp index.node native/index.node && node-pre-gyp package && node-pre-gyp-github publish",
     "test:server": "CUBEJS_NATIVE_INTERNAL_DEBUG=true CUBESQL_LOG_LEVEL=trace CUBESQL_PG_PORT=5555 node test/server.js",
     "test:server:stream": "CUBESQL_STREAM_MODE=true CUBESQL_LOG_LEVEL=error CUBESQL_PG_PORT=5555 node test/server.js",
-    "test:unit": "jest --forceExit test",
+    "test:unit": "jest --forceExit",
     "test:cargo": "cargo test"
   },
   "engines": {
@@ -56,8 +56,10 @@
     "testEnvironment": "node",
     "verbose": true,
     "roots": [
-      "<rootDir>/js/",
-      "<rootDir>/test/"
+      "<rootDir>/dist/test/"
+    ],
+    "setupFilesAfterEnv": [
+      "<rootDir>/dist/test/setup/index.js"
     ]
   },
   "license": "Apache-2.0",
