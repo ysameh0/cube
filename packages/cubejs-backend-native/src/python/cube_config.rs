@@ -2,8 +2,9 @@ use crate::utils::bind_method;
 use convert_case::{Case, Casing};
 use cubesql::CubeError;
 use neon::prelude::*;
+use neon::types::JsDate;
 use pyo3::exceptions::PyTypeError;
-use pyo3::types::{PyBool, PyDict, PyFloat, PyFunction, PyInt, PyString};
+use pyo3::types::{PyBool, PyDict, PyFloat, PyFunction, PyInt, PyList, PyString};
 use pyo3::{Py, PyAny, PyErr, PyObject, PyResult, Python, ToPyObject};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -96,22 +97,59 @@ impl CubeConfigPy {
 
 impl Finalize for CubeConfigPy {}
 
-fn convert_dict_from_js_to_python<'a, C: Context<'a>>(
-    root: &PyDict,
-    from: Handle<'a, JsObject>,
+fn convert_from_js_to_python<'a, C: Context<'a>>(
+    from: Handle<'a, JsValue>,
     cx: &mut C,
     py: Python,
-) -> NeonResult<()> {
-    let properties = from.get_own_property_names(cx)?;
-    for i in 0..properties.len(cx) {
-        let property: Handle<JsString> = properties.get(cx, i)?;
+) -> NeonResult<PyObject> {
+    if from.is_a::<JsString, _>(cx) {
+        let v = from.downcast_or_throw::<JsString, _>(cx)?;
+        Ok(PyString::new(py, &v.value(cx)).to_object(py))
+    } else if from.is_a::<JsArray, _>(cx) {
+        let v = from.downcast_or_throw::<JsArray, _>(cx)?;
+        let el = v.to_vec(cx)?;
 
-        // println!("prop {:?}", property.value(cx));
+        let mut elements = Vec::with_capacity(el.len());
 
-        root.set_item(property.value(cx), PyDict::new(py)).unwrap();
+        for el in el {
+            let py_el = convert_from_js_to_python(el, cx, py)?;
+            elements.push(py_el)
+        }
+
+        Ok(PyList::new(py, elements).to_object(py))
+    } else if from.is_a::<JsObject, _>(cx) {
+        let r = PyDict::new(py);
+
+        let v = from.downcast_or_throw::<JsObject, _>(cx)?;
+        let properties = v.get_own_property_names(cx)?;
+        for i in 0..properties.len(cx) {
+            let property: Handle<JsString> = properties.get(cx, i)?;
+            let property_val = v.get_value(cx, property)?;
+            let to_val = convert_from_js_to_python(property_val, cx, py)?;
+
+            r.set_item(property.value(cx), to_val).unwrap();
+        }
+
+        Ok(r.to_object(py))
+    } else if from.is_a::<JsBoolean, _>(cx) {
+        // TODO: Implement
+        Ok(PyDict::new(py).to_object(py))
+    } else if from.is_a::<JsNumber, _>(cx) {
+        let v = from.downcast_or_throw::<JsNumber, _>(cx)?;
+        Ok(PyFloat::new(py, v.value(cx)).to_object(py))
+    } else if from.is_a::<JsNull, _>(cx) {
+        Ok(py.None())
+    } else if from.is_a::<JsUndefined, _>(cx) {
+        Ok(py.None())
+    } else if from.is_a::<JsPromise, _>(cx) {
+        cx.throw_error(format!("Unsupported conversion from JsPromise to Py"))
+    } else if from.is_a::<JsFunction, _>(cx) {
+        cx.throw_error(format!("Unsupported conversion from JsFunction to Py"))
+    } else if from.is_a::<JsDate, _>(cx) {
+        cx.throw_error(format!("Unsupported conversion from JsDate to Py"))
+    } else {
+        cx.throw_error(format!("Unsupported conversion from {:?} to Py", from))
     }
-
-    Ok(())
 }
 
 fn config_py_query_rewrite(mut cx: FunctionContext) -> JsResult<JsUndefined> {
@@ -125,14 +163,11 @@ fn config_py_query_rewrite(mut cx: FunctionContext) -> JsResult<JsUndefined> {
     let context_arg = cx.argument::<JsObject>(1)?;
 
     let (query, context) = Python::with_gil(|py| {
-        let query = PyDict::new(py);
-        convert_dict_from_js_to_python(query, query_arg, &mut cx, py).unwrap();
+        let query = convert_from_js_to_python(query_arg.as_value(&mut cx), &mut cx, py)?;
+        let ctx = convert_from_js_to_python(context_arg.as_value(&mut cx), &mut cx, py)?;
 
-        let ctx = PyDict::new(py);
-        convert_dict_from_js_to_python(ctx, context_arg, &mut cx, py).unwrap();
-
-        (query.to_object(py), ctx.to_object(py))
-    });
+        Ok((query, ctx))
+    })?;
 
     let res = this.borrow_mut().query_rewrite(query, context);
     match res {
@@ -152,11 +187,10 @@ fn config_py_check_auth(mut cx: FunctionContext) -> JsResult<JsUndefined> {
     let authorization = cx.argument::<JsString>(1)?.value(&mut cx);
 
     let req = Python::with_gil(|py| {
-        let req = PyDict::new(py);
-        convert_dict_from_js_to_python(req, req_arg, &mut cx, py).unwrap();
+        let req = convert_from_js_to_python(req_arg.as_value(&mut cx), &mut cx, py)?;
 
-        req.to_object(py)
-    });
+        Ok(req)
+    })?;
 
     let res = this.borrow_mut().check_auth(req, authorization);
     match res {
@@ -219,7 +253,8 @@ impl CubeConfigPy {
 
     fn query_rewrite(&mut self, query: PyObject, ctx: PyObject) -> Result<(), CubeError> {
         if let Some(query_rewrite_fn) = self.query_rewrite.as_ref() {
-            Python::with_gil(|py| query_rewrite_fn.call1(py, (query, ctx))).unwrap();
+            Python::with_gil(|py| query_rewrite_fn.call1(py, (query, ctx)))
+                .map_err(|err| CubeError::internal(format!("Python error: {}", err)))?;
         }
 
         Ok(())
@@ -227,7 +262,8 @@ impl CubeConfigPy {
 
     fn check_auth(&mut self, req: PyObject, authorization: String) -> Result<(), CubeError> {
         if let Some(check_auth_fn) = self.check_auth.as_ref() {
-            Python::with_gil(|py| check_auth_fn.call1(py, (req, &authorization))).unwrap();
+            Python::with_gil(|py| check_auth_fn.call1(py, (req, &authorization)))
+                .map_err(|err| CubeError::internal(format!("Python error: {}", err)))?;
         }
 
         Ok(())
