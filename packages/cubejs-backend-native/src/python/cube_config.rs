@@ -1,11 +1,15 @@
 use crate::utils::bind_method;
+
 use convert_case::{Case, Casing};
 use cubesql::CubeError;
+use log::error;
 use neon::prelude::*;
 use neon::types::JsDate;
-use pyo3::exceptions::PyTypeError;
+use pyo3::exceptions::{PyNotImplementedError, PyTypeError};
+
 use pyo3::types::{PyBool, PyDict, PyFloat, PyFunction, PyInt, PyList, PyString};
-use pyo3::{Py, PyAny, PyErr, PyObject, PyResult, Python, ToPyObject};
+use pyo3::{AsPyPointer, Py, PyAny, PyErr, PyObject, PyResult, Python, ToPyObject};
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -29,6 +33,26 @@ impl CubeConfigPy {
             dynamic_properties: Some(HashMap::new()),
             query_rewrite: None,
             check_auth: None,
+        }
+    }
+
+    pub fn get_query_rewrite(&self) -> Result<&Py<PyFunction>, CubeError> {
+        if let Some(fun) = self.query_rewrite.as_ref() {
+            Ok(fun)
+        } else {
+            Err(CubeError::internal(
+                "Unable to reference query_rewrite, it's empty".to_string(),
+            ))
+        }
+    }
+
+    pub fn get_check_auth(&self) -> Result<&Py<PyFunction>, CubeError> {
+        if let Some(fun) = self.check_auth.as_ref() {
+            Ok(fun)
+        } else {
+            Err(CubeError::internal(
+                "Unable to reference check_auth, it's empty".to_string(),
+            ))
         }
     }
 
@@ -152,9 +176,12 @@ fn convert_from_js_to_python<'a, C: Context<'a>>(
     }
 }
 
-fn config_py_query_rewrite(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+fn config_py_query_rewrite(mut cx: FunctionContext) -> JsResult<JsPromise> {
     #[cfg(build = "debug")]
     trace!("JsAsyncChannel.config_py_query_rewrite");
+
+    let (deferred, promise) = cx.promise();
+    let channel = cx.channel();
 
     let this = cx
         .this()
@@ -169,20 +196,49 @@ fn config_py_query_rewrite(mut cx: FunctionContext) -> JsResult<JsUndefined> {
         Ok((query, ctx))
     })?;
 
-    let res = this.borrow_mut().query_rewrite(query, context);
-    match res {
-        Err(err) => cx.throw_error(format!("Python error: {}", err)),
-        Ok(_) => Ok(cx.undefined()),
-    }
+    let py_method = match this.borrow().get_query_rewrite() {
+        Ok(fun) => fun.clone(),
+        Err(err) => return cx.throw_error(format!("{}", err)),
+    };
+    std::thread::spawn(move || {
+        let res = Python::with_gil(|py| {
+            let res = py_method.call1(py, (query, context))?;
+            let is_coroutine = unsafe { pyo3::ffi::PyCoro_CheckExact(res.as_ptr()) == 1 };
+            if is_coroutine {
+                // let fut = pyo3_asyncio::tokio::into_future(call_res.as_ref(py))?;
+                // pyo3_asyncio::tokio::run(py, fut)
+
+                Err(PyErr::new::<PyNotImplementedError, _>(
+                    "Async functions are not supported, unimplemented",
+                ))
+            } else {
+                Ok(res)
+            }
+        });
+        deferred.settle_with(&channel, move |mut cx| match res {
+            Err(err) => {
+                error!("Python error: {:?}", err);
+
+                cx.throw_error(format!("Python error: {}", err))
+            }
+            Ok(_) => Ok(cx.undefined()),
+        });
+    });
+
+    Ok(promise)
 }
 
-fn config_py_check_auth(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+fn config_py_check_auth(mut cx: FunctionContext) -> JsResult<JsPromise> {
     #[cfg(build = "debug")]
     trace!("JsAsyncChannel.config_py_check_auth");
+
+    let (deferred, promise) = cx.promise();
+    let channel = cx.channel();
 
     let this = cx
         .this()
         .downcast_or_throw::<BoxedCubeConfigPy, _>(&mut cx)?;
+
     let req_arg = cx.argument::<JsObject>(0)?;
     let authorization = cx.argument::<JsString>(1)?.value(&mut cx);
 
@@ -192,11 +248,36 @@ fn config_py_check_auth(mut cx: FunctionContext) -> JsResult<JsUndefined> {
         Ok(req)
     })?;
 
-    let res = this.borrow_mut().check_auth(req, authorization);
-    match res {
-        Err(err) => cx.throw_error(format!("Python error: {}", err)),
-        Ok(_) => Ok(cx.undefined()),
-    }
+    let py_method = match this.borrow().get_check_auth() {
+        Ok(fun) => fun.clone(),
+        Err(err) => return cx.throw_error(format!("{}", err)),
+    };
+    std::thread::spawn(move || {
+        let res = Python::with_gil(|py| {
+            let res = py_method.call1(py, (req, &authorization))?;
+            let is_coroutine = unsafe { pyo3::ffi::PyCoro_CheckExact(res.as_ptr()) == 1 };
+            if is_coroutine {
+                // let fut = pyo3_asyncio::tokio::into_future(call_res.as_ref(py))?;
+                // pyo3_asyncio::tokio::run(py, fut)
+
+                Err(PyErr::new::<PyNotImplementedError, _>(
+                    "Async functions are not supported, unimplemented",
+                ))
+            } else {
+                Ok(res)
+            }
+        });
+        deferred.settle_with(&channel, move |mut cx| match res {
+            Err(err) => {
+                error!("Python error: {:?}", err);
+
+                cx.throw_error(format!("Python error: {}", err))
+            }
+            Ok(_) => Ok(cx.undefined()),
+        });
+    });
+
+    Ok(promise)
 }
 
 impl CubeConfigPy {
@@ -249,23 +330,5 @@ impl CubeConfigPy {
         };
 
         Ok(obj)
-    }
-
-    fn query_rewrite(&mut self, query: PyObject, ctx: PyObject) -> Result<(), CubeError> {
-        if let Some(query_rewrite_fn) = self.query_rewrite.as_ref() {
-            Python::with_gil(|py| query_rewrite_fn.call1(py, (query, ctx)))
-                .map_err(|err| CubeError::internal(format!("Python error: {}", err)))?;
-        }
-
-        Ok(())
-    }
-
-    fn check_auth(&mut self, req: PyObject, authorization: String) -> Result<(), CubeError> {
-        if let Some(check_auth_fn) = self.check_auth.as_ref() {
-            Python::with_gil(|py| check_auth_fn.call1(py, (req, &authorization)))
-                .map_err(|err| CubeError::internal(format!("Python error: {}", err)))?;
-        }
-
-        Ok(())
     }
 }

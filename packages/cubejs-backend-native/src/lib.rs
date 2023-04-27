@@ -12,6 +12,7 @@ mod utils;
 use once_cell::sync::OnceCell;
 
 use std::sync::Arc;
+use std::thread;
 
 use crate::python::CubeConfigPy;
 use auth::NodeBridgeAuthService;
@@ -45,6 +46,19 @@ fn runtime<'a, C: Context<'a>>(cx: &mut C) -> NeonResult<&'static Runtime> {
             .enable_all()
             .build()
             .or_else(|err| cx.throw_error(err.to_string()))
+    })
+}
+
+fn py_runtime<'a, C: Context<'a>>(cx: &mut C) -> NeonResult<&()> {
+    static PY_RUNTIME: OnceCell<()> = OnceCell::new();
+
+    let runtime = runtime(cx)?;
+
+    PY_RUNTIME.get_or_try_init(|| {
+        pyo3::prepare_freethreaded_python();
+        pyo3_asyncio::tokio::init_with_runtime(runtime).unwrap();
+
+        Ok(())
     })
 }
 
@@ -195,6 +209,21 @@ fn python_load_config(mut cx: FunctionContext) -> JsResult<JsPromise> {
     let (deferred, promise) = cx.promise();
     let channel = cx.channel();
 
+    py_runtime(&mut cx)?;
+
+    // thread::spawn(|| {
+    //     Python::with_gil(|py| -> PyResult<()> {
+    //         let asyncio = py.import("asyncio")?;
+    //
+    //         let py_loop = asyncio.call_method0("new_event_loop")?;
+    //         asyncio.call_method1("set_event_loop", (py_loop,))?;
+    //         py_loop.call_method0("run_forever")?;
+    //
+    //         Ok(())
+    //     })
+    //     .unwrap();
+    // });
+
     let conf_res = Python::with_gil(|py| -> PyResult<CubeConfigPy> {
         let cube_conf_code = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -202,19 +231,19 @@ fn python_load_config(mut cx: FunctionContext) -> JsResult<JsPromise> {
         ));
         PyModule::from_code(py, cube_conf_code, "__init__.py", "cube.conf")?;
 
-        let config_module =
-            PyModule::from_code(py, &config_file_content, "config.py", "")?.getattr("settings")?;
+        let config_module = PyModule::from_code(py, &config_file_content, "config.py", "")?;
+        let settings_py = config_module.getattr("settings")?;
 
         let mut cube_conf = CubeConfigPy::new();
 
         // TODO: Dynamic iter
-        cube_conf.dynamic_from_attr(config_module, "schema_path")?;
-        cube_conf.dynamic_from_attr(config_module, "base_path")?;
-        cube_conf.dynamic_from_attr(config_module, "compiler_cache_size")?;
-        cube_conf.dynamic_from_attr(config_module, "telemetry")?;
-        cube_conf.dynamic_from_attr(config_module, "pg_sql_port")?;
+        cube_conf.dynamic_from_attr(settings_py, "schema_path")?;
+        cube_conf.dynamic_from_attr(settings_py, "base_path")?;
+        cube_conf.dynamic_from_attr(settings_py, "compiler_cache_size")?;
+        cube_conf.dynamic_from_attr(settings_py, "telemetry")?;
+        cube_conf.dynamic_from_attr(settings_py, "pg_sql_port")?;
 
-        cube_conf.apply_dynamic_functions(config_module)?;
+        cube_conf.apply_dynamic_functions(settings_py)?;
 
         Ok(cube_conf)
     });

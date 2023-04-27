@@ -26,7 +26,7 @@ import * as native from '../js';
     if (config.queryRewrite) {
         console.log('->queryRewrite');
 
-        const result = config.queryRewrite(
+        const result = await config.queryRewrite(
             {
                 measures: ['Orders.count']
             },
@@ -44,10 +44,12 @@ import * as native from '../js';
     if (config.checkAuth) {
         console.log('->checkAuth');
 
-        const result = config.checkAuth({
+        const result =  await config.checkAuth({
             requestId: 'kek'
         }, 'MY_LONG_TOKEN');
 
         console.log('<-', result);
     }
+
+    console.log('js finish');
 })();
