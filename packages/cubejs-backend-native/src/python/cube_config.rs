@@ -161,16 +161,14 @@ fn convert_from_js_to_python<'a, C: Context<'a>>(
     } else if from.is_a::<JsNumber, _>(cx) {
         let v = from.downcast_or_throw::<JsNumber, _>(cx)?;
         Ok(PyFloat::new(py, v.value(cx)).to_object(py))
-    } else if from.is_a::<JsNull, _>(cx) {
-        Ok(py.None())
-    } else if from.is_a::<JsUndefined, _>(cx) {
+    } else if from.is_a::<JsNull, _>(cx) || from.is_a::<JsUndefined, _>(cx) {
         Ok(py.None())
     } else if from.is_a::<JsPromise, _>(cx) {
-        cx.throw_error(format!("Unsupported conversion from JsPromise to Py"))
+        cx.throw_error("Unsupported conversion from JsPromise to Py")
     } else if from.is_a::<JsFunction, _>(cx) {
-        cx.throw_error(format!("Unsupported conversion from JsFunction to Py"))
+        cx.throw_error("Unsupported conversion from JsFunction to Py")
     } else if from.is_a::<JsDate, _>(cx) {
-        cx.throw_error(format!("Unsupported conversion from JsDate to Py"))
+        cx.throw_error("Unsupported conversion from JsDate to Py")
     } else {
         cx.throw_error(format!("Unsupported conversion from {:?} to Py", from))
     }

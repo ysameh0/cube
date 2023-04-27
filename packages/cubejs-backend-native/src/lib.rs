@@ -12,7 +12,6 @@ mod utils;
 use once_cell::sync::OnceCell;
 
 use std::sync::Arc;
-use std::thread;
 
 use crate::python::CubeConfigPy;
 use auth::NodeBridgeAuthService;
