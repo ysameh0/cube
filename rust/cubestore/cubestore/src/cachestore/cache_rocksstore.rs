@@ -273,7 +273,7 @@ impl RocksCacheStore {
                     .get_single_opt_row_by_index(&index_key, &QueueResultRocksIndex::ByPath)?;
 
                 if let Some(queue_result) = queue_result {
-                    result_schema.try_delete(queue_result.get_id(), batch_pipe)?;
+                    // result_schema.try_delete(queue_result.get_id(), batch_pipe)?;
 
                     Ok(Some(QueueResultResponse::Success {
                         value: Some(queue_result.row.value),
@@ -374,6 +374,7 @@ pub trait CacheStore: DIService + Send + Sync {
 
     // queue
     async fn queue_all(&self) -> Result<Vec<IdRow<QueueItem>>, CubeError>;
+    async fn queue_results_all(&self) -> Result<Vec<IdRow<QueueResult>>, CubeError>;
     async fn queue_add(&self, item: QueueItem) -> Result<QueueAddResponse, CubeError>;
     async fn queue_truncate(&self) -> Result<(), CubeError>;
     async fn queue_to_cancel(
@@ -557,6 +558,12 @@ impl CacheStore for RocksCacheStore {
     async fn queue_all(&self) -> Result<Vec<IdRow<QueueItem>>, CubeError> {
         self.store
             .read_operation(move |db_ref| Ok(QueueItemRocksTable::new(db_ref).all_rows()?))
+            .await
+    }
+
+    async fn queue_results_all(&self) -> Result<Vec<IdRow<QueueResult>>, CubeError> {
+        self.store
+            .read_operation(move |db_ref| Ok(QueueResultRocksTable::new(db_ref).all_rows()?))
             .await
     }
 
@@ -891,8 +898,8 @@ impl CacheStore for RocksCacheStore {
                     QueueResultAckEventResult::WithResult { row_id, result } => {
                         self.store
                             .write_operation(move |db_ref, batch_pipe| {
-                                let queue_schema = QueueResultRocksTable::new(db_ref.clone());
-                                queue_schema.try_delete(row_id, batch_pipe)?;
+                                // let queue_schema = QueueResultRocksTable::new(db_ref.clone());
+                                // queue_schema.try_delete(row_id, batch_pipe)?;
 
                                 Ok(Some(QueueResultResponse::Success {
                                     value: Some(result),
@@ -1021,6 +1028,10 @@ impl CacheStore for ClusterCacheStoreClient {
 
     async fn queue_all(&self) -> Result<Vec<IdRow<QueueItem>>, CubeError> {
         panic!("CacheStore cannot be used on the worker node! queue_all was used.")
+    }
+
+    async fn queue_results_all(&self) -> Result<Vec<IdRow<QueueResult>>, CubeError> {
+        panic!("CacheStore cannot be used on the worker node! queue_results_all was used.")
     }
 
     async fn queue_add(&self, _item: QueueItem) -> Result<QueueAddResponse, CubeError> {

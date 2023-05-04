@@ -37,6 +37,10 @@ impl QueueResult {
     pub fn get_value(&self) -> &String {
         &self.value
     }
+
+    pub fn get_expire(&self) -> &DateTime<Utc> {
+        &self.expire
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -97,7 +101,7 @@ impl RocksSecondaryIndex<QueueResult, QueueResultIndexKey> for QueueResultRocksI
 
     fn is_unique(&self) -> bool {
         match self {
-            QueueResultRocksIndex::ByPath => true,
+            QueueResultRocksIndex::ByPath => false,
         }
     }
 
