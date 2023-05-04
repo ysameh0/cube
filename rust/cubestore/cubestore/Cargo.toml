@@ -64,7 +64,7 @@ rand = "0.8.0"
 parquet-format = "=2.6.1"
 hex = "0.4.2"
 cloud-storage = "0.7.0"
-tokio-util = { version = "0.6.2", features=["compat"] }
+tokio-util = { version = "0.7", features = ["compat", "codec", "time"] }
 futures-timer = "3.0.2"
 tokio-stream = { version = "0.1.2", features=["io-util"] }
 scopeguard = "1.1.0"

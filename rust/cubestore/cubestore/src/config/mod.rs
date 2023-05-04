@@ -1423,9 +1423,10 @@ impl Config {
         }
 
         self.injector
-            .register_typed::<CacheStoreSchedulerImpl, _, _, _>(async move |_i| {
+            .register_typed::<CacheStoreSchedulerImpl, _, _, _>(async move |i| {
                 Arc::new(CacheStoreSchedulerImpl::new(
                     cachestore_event_sender_to_move.subscribe(),
+                    i.get_service_typed().await,
                 ))
             })
             .await;

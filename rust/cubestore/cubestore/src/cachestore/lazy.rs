@@ -210,6 +210,10 @@ impl CacheStore for LazyRocksCacheStore {
         self.init().await?.queue_results_all().await
     }
 
+    async fn queue_results_multi_delete(&self, ids: Vec<u64>) -> Result<(), CubeError> {
+        self.init().await?.queue_results_multi_delete(ids).await
+    }
+
     async fn queue_add(&self, item: QueueItem) -> Result<QueueAddResponse, CubeError> {
         self.init().await?.queue_add(item).await
     }

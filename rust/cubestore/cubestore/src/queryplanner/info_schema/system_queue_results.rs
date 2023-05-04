@@ -2,7 +2,7 @@ use crate::cachestore::QueueResult;
 use crate::metastore::IdRow;
 use crate::queryplanner::{InfoSchemaTableDef, InfoSchemaTableDefContext};
 use crate::CubeError;
-use arrow::array::{ArrayRef, Int64Array, StringArray, TimestampNanosecondArray, UInt64Array};
+use arrow::array::{ArrayRef, StringArray, TimestampNanosecondArray, UInt64Array};
 use arrow::datatypes::{DataType, Field, TimeUnit};
 use async_trait::async_trait;
 use std::sync::Arc;
